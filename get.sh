@@ -6,8 +6,8 @@
 
 set -eu
 
-REPO_OWNER="<用户名>"
-REPO_NAME="<仓库名>"
+REPO_OWNER="FunMaximum"
+REPO_NAME="sHway2"
 SCRIPT_NAME="sHway2-v1.0.sh"
 
 red()   { printf '\033[31m%s\033[0m\n' "$*"; }
