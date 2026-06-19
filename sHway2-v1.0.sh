@@ -272,12 +272,28 @@ collect_inputs() {
 write_cert() {
   mkdir -p "$BASE_DIR"
   chmod 700 "$BASE_DIR"
+
+  # 若 SNI 变更，强制重建证书（避免 CN 与 SNI 不匹配）
+  if [ -s "$CERT" ] && [ -s "$KEY" ]; then
+    existing_cn="$(openssl x509 -in "$CERT" -noout -subject 2>/dev/null | sed -n 's/.*CN *= *//p')"
+    if [ "$existing_cn" != "$SNI" ]; then
+      info "SNI 变更为 $SNI（原证书 CN=$existing_cn），重新生成证书..."
+      rm -f "$CERT" "$KEY"
+    fi
+  fi
+
   if [ ! -s "$CERT" ] || [ ! -s "$KEY" ]; then
     info "正在生成自签 TLS 证书..."
     openssl req -x509 -newkey rsa:2048 -sha256 -days 3650 -nodes \
-      -keyout "$KEY" -out "$CERT" -subj "/CN=$SNI" >/dev/null 2>&1
+      -keyout "$KEY" -out "$CERT" -subj "/CN=$SNI" >/dev/null 2>&1 \
+      || die "证书生成失败，请检查 openssl 安装"
     chmod 600 "$KEY"
   fi
+
+  # 始终计算 SHA256 指纹（不依赖分支）
+  CERT_SHA256="$(openssl x509 -in "$CERT" -noout -fingerprint -sha256 | sed 's/.*=//;s/://g' | tr '[:upper:]' '[:lower:]')"
+  [ -n "$CERT_SHA256" ] || die "无法计算证书 SHA256 指纹"
+  info "证书 SHA256 指纹：$CERT_SHA256"
 }
 
 write_config() {
@@ -386,6 +402,7 @@ ANYTLS_PASS='$ANYTLS_PASS'
 REMARK_PREFIX='$REMARK_PREFIX'
 HY2_JUMP='$HY2_JUMP'
 HY2_JUMP_RANGE='$HY2_JUMP_RANGE'
+CERT_SHA256='$CERT_SHA256'
 EOF
   chmod 600 "$CONF" "$META"
 }
@@ -482,6 +499,12 @@ restart_service() {
 }
 
 print_links() {
+  # 计算证书 SHA256 指纹（钉扎用）
+  CERT_SHA256=""
+  if [ -s "$CERT" ]; then
+    CERT_SHA256="$(openssl x509 -in "$CERT" -noout -fingerprint -sha256 | sed 's/.*=//;s/://g' | tr '[:upper:]' '[:lower:]')"
+  fi
+
   e_server="$(urlencode "$SERVER")"
   e_sni="$(urlencode "$SNI")"
   e_hy2_pass="$(urlencode "$HY2_PASS")"
@@ -492,14 +515,20 @@ print_links() {
   e_r_tuic="$(urlencode "$REMARK_PREFIX-TUIC5")"
   e_r_anytls="$(urlencode "$REMARK_PREFIX-AnyTLS")"
 
-  hy2_extra=""
-  if [ "$HY2_JUMP" = "y" ]; then
-    hy2_extra="&mport=$(urlencode "$HY2_JUMP_RANGE")"
+  # pinSHA256 参数（优先证书钉扎，回退到 insecure=1）
+  pin_param=""
+  if [ -n "$CERT_SHA256" ]; then
+    pin_param="&pinSHA256=${CERT_SHA256}"
   fi
 
-  hy2_link="hysteria2://${e_hy2_pass}@${e_server}:${HY2_PORT}/?sni=${e_sni}&insecure=1&obfs=salamander&obfs-password=${e_hy2_obfs}${hy2_extra}#${e_r_hy2}"
-  tuic_link="tuic://${TUIC_UUID}:${e_tuic_pass}@${e_server}:${TUIC_PORT}/?sni=${e_sni}&alpn=h3&allow_insecure=1&congestion_control=bbr&udp_relay_mode=native#${e_r_tuic}"
-  anytls_link="anytls://${e_anytls_pass}@${e_server}:${ANYTLS_PORT}/?security=tls&sni=${e_sni}&insecure=1#${e_r_anytls}"
+  hy2_extra=""
+  if [ "$HY2_JUMP" = "y" ]; then
+    hy2_extra="&mport=${HY2_JUMP_RANGE}"
+  fi
+
+  hy2_link="hysteria2://${e_hy2_pass}@${e_server}:${HY2_PORT}/?sni=${e_sni}&insecure=1${pin_param}&obfs=salamander&obfs-password=${e_hy2_obfs}${hy2_extra}#${e_r_hy2}"
+  tuic_link="tuic://${TUIC_UUID}:${e_tuic_pass}@${e_server}:${TUIC_PORT}/?sni=${e_sni}&alpn=h3&allow_insecure=1${pin_param}&congestion_control=bbr&udp_relay_mode=native#${e_r_tuic}"
+  anytls_link="anytls://${e_anytls_pass}@${e_server}:${ANYTLS_PORT}/?security=tls&sni=${e_sni}&insecure=1${pin_param}#${e_r_anytls}"
 
   cat > "$BASE_DIR/v2rayn-links.txt" <<EOF
 $hy2_link
@@ -523,6 +552,11 @@ EOF
   info "链接已保存：$BASE_DIR/v2rayn-links.txt"
   info "服务端配置：$CONF"
   info ""
+  if [ -n "$CERT_SHA256" ]; then
+    info "证书 SHA256 指纹：$CERT_SHA256"
+    info "（链接已内嵌 pinSHA256，支持钉扎验证的客户端可自动匹配）"
+    info ""
+  fi
   yellow "注意：HY2/TUIC 使用 UDP，AnyTLS 使用 TCP。若 VPS 厂商有安全组，请放行对应端口。自签证书需要客户端允许不安全证书。"
 }
 
@@ -598,6 +632,12 @@ print_links() {
   # shellcheck disable=SC1090
   . "$META"
 
+  CERT_FILE="$BASE_DIR/server.crt"
+  CERT_SHA256=""
+  if [ -s "$CERT_FILE" ] && command -v openssl >/dev/null 2>&1; then
+    CERT_SHA256="$(openssl x509 -in "$CERT_FILE" -noout -fingerprint -sha256 | sed 's/.*=//;s/://g' | tr '[:upper:]' '[:lower:]')"
+  fi
+
   e_server="$(urlencode "$SERVER")"
   e_sni="$(urlencode "$SNI")"
   e_hy2_pass="$(urlencode "$HY2_PASS")"
@@ -608,14 +648,19 @@ print_links() {
   e_r_tuic="$(urlencode "$REMARK_PREFIX-TUIC5")"
   e_r_anytls="$(urlencode "$REMARK_PREFIX-AnyTLS")"
 
-  hy2_extra=""
-  if [ "${HY2_JUMP:-n}" = "y" ]; then
-    hy2_extra="&mport=$(urlencode "$HY2_JUMP_RANGE")"
+  pin_param=""
+  if [ -n "$CERT_SHA256" ]; then
+    pin_param="&pinSHA256=${CERT_SHA256}"
   fi
 
-  hy2_link="hysteria2://${e_hy2_pass}@${e_server}:${HY2_PORT}/?sni=${e_sni}&insecure=1&obfs=salamander&obfs-password=${e_hy2_obfs}${hy2_extra}#${e_r_hy2}"
-  tuic_link="tuic://${TUIC_UUID}:${e_tuic_pass}@${e_server}:${TUIC_PORT}/?sni=${e_sni}&alpn=h3&allow_insecure=1&congestion_control=bbr&udp_relay_mode=native#${e_r_tuic}"
-  anytls_link="anytls://${e_anytls_pass}@${e_server}:${ANYTLS_PORT}/?security=tls&sni=${e_sni}&insecure=1#${e_r_anytls}"
+  hy2_extra=""
+  if [ "${HY2_JUMP:-n}" = "y" ]; then
+    hy2_extra="&mport=${HY2_JUMP_RANGE}"
+  fi
+
+  hy2_link="hysteria2://${e_hy2_pass}@${e_server}:${HY2_PORT}/?sni=${e_sni}&insecure=1${pin_param}&obfs=salamander&obfs-password=${e_hy2_obfs}${hy2_extra}#${e_r_hy2}"
+  tuic_link="tuic://${TUIC_UUID}:${e_tuic_pass}@${e_server}:${TUIC_PORT}/?sni=${e_sni}&alpn=h3&allow_insecure=1${pin_param}&congestion_control=bbr&udp_relay_mode=native#${e_r_tuic}"
+  anytls_link="anytls://${e_anytls_pass}@${e_server}:${ANYTLS_PORT}/?security=tls&sni=${e_sni}&insecure=1${pin_param}#${e_r_anytls}"
 
   umask 077
   cat > "$LINKS" <<EOL
@@ -635,6 +680,11 @@ EOL
   info "AnyTLS:"
   info "$anytls_link"
   info ""
+  if [ -n "$CERT_SHA256" ]; then
+    info "证书 SHA256 指纹：$CERT_SHA256"
+    info "（链接已内嵌 pinSHA256，支持钉扎的客户端可自动匹配）"
+    info ""
+  fi
   info "链接已保存：$LINKS"
 }
 

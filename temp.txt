@@ -1,0 +1,11 @@
+Hysteria2:
+hysteria2://6e9e8f5b3a98525e5cd9a0d8ac1f8d61@47.76.128.10:11451/?sni=www.bing.com&insecure=1&obfs=salamander&obfs-password=b8d5f231dcbe9c2d#SB-HY2
+
+TUIC v5:
+tuic://d8573d19-630a-45ea-ad84-2c5192233b43:05ef2de0e8d35c438ee582c672231676@47.76.128.10:11452/?sni=www.bing.com&alpn=h3&allow_insecure=1&congestion_control=bbr&udp_relay_mode=native#SB-TUIC5
+
+AnyTLS:
+anytls://866f04bf579971b837b51c450e3d417a@47.76.128.10:11453/?security=tls&sni=www.bing.com&insecure=1#SB-AnyTLS
+
+链接已保存：/etc/sing-box/v2rayn-links.txt
+服务端配置：/etc/sing-box/config.json

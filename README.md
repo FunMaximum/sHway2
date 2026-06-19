@@ -18,7 +18,7 @@ Debian 12 / Ubuntu 22.04 / Ubuntu 24.04 / Alpine
 
 ```bash
 # 跟随最新 Release 版本（推荐）
-curl -fsSL https://raw.githubusercontent.com/FunMaximum/sHway2/main/get.sh | sudo sh
+curl -fsSL https://raw.githubusercontent.com/FunMaximum/sHway2/master/get.sh | sudo sh
 ```
 
 ```bash
@@ -36,20 +36,20 @@ apk add --no-cache ca-certificates curl
 
 ## 涉及协议
 
-| 协议 | 传输层 | 默认端口 | 特性 |
-|---|---|---|---|
-| Hysteria2 | UDP | `11451` | salamander 混淆、可选端口跳跃 |
-| TUIC v5 | UDP | `11452` | BBR 拥塞控制、QUIC 传输 |
-| AnyTLS | TCP | `11453` | TLS 隧道 |
+| 协议      | 传输层 | 默认端口  | 特性                          |
+| --------- | ------ | --------- | ----------------------------- |
+| Hysteria2 | UDP    | `11451` | salamander 混淆、可选端口跳跃 |
+| TUIC v5   | UDP    | `11452` | BBR 拥塞控制、QUIC 传输       |
+| AnyTLS    | TCP    | `11453` | TLS 隧道                      |
 
 ## 默认配置
 
-| 项目 | 默认值 |
-|---|---|
-| Hysteria2 上行 | `50 Mbps` |
-| Hysteria2 下行 | `200 Mbps` |
-| TLS | 自签证书（10 年有效期） |
-| 证书域名 / SNI | `www.bing.com` |
+| 项目           | 默认值                  |
+| -------------- | ----------------------- |
+| Hysteria2 上行 | `50 Mbps`             |
+| Hysteria2 下行 | `200 Mbps`            |
+| TLS            | 自签证书（10 年有效期） |
+| 证书域名 / SNI | `www.bing.com`        |
 
 安装过程中可交互自定义：端口、带宽、节点名称前缀、是否开启 Hysteria2 端口跳跃。
 
