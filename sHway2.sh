@@ -42,7 +42,12 @@ case "$cmd" in
     write_cert
     write_config
     check_config
-    restart_service
+    if [ "$INIT" = "systemd" ]; then
+      write_systemd_service
+    else
+      write_openrc_service
+    fi
+    enable_and_start
     install_sb_and_lib
     print_links
     ;;
