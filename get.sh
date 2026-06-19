@@ -57,10 +57,14 @@ tar -xzf "$tarball" -C "$tmp_dir" || die "解压失败"
 dir_name="${REPO_NAME}-${tag#v}"
 
 # 兼容处理：如果 tag 本身没有 v 前缀
-extracted="$(find "$tmp_dir" -maxdepth 1 -type d -name "${REPO_NAME}-*" | head -1)"
-[ -n "$extracted" ] || die "解压后未找到安装目录"
+# extracted="$(find "$tmp_dir" -maxdepth 1 -type d -name "${REPO_NAME}-*" | head -1)"
+# [ -n "$extracted" ] || die "解压后未找到安装目录"
 
-install_script="$extracted/sHway2.sh"
+
+# install_script="$extracted/sHway2.sh"
+
+install_script="$tmp_dir/${REPO_NAME}-${tag#v}/sHway2.sh"
+
 [ -r "$install_script" ] || die "未找到 sHway2.sh，请检查 Release 结构"
 
 # ── 4. 执行安装 ──
