@@ -5,6 +5,7 @@
 - `get.sh` is the lightweight bootstrapper. It discovers the latest GitHub release, downloads the versioned installer, and executes it.
 - `sHway2.sh` is the main POSIX shell installer. It detects supported systems, installs sing-box, generates server/client configuration, and creates the `sb` management command.
 - `uninstall.sh` removes sHway2 runtime state and service registration while preserving the sing-box binary and dependencies for a fast reinstall.
+- `check-ports.sh` performs read-only server listener/firewall checks and remote TCP/UDP port probes.
 - `README.md` documents supported platforms, defaults, installation, and operations.
 - `TECHNICAL.md` is the persistent source of truth for architecture, invariants, audits, and feature history. Read it before planning or implementing a feature and update it when behavior changes.
 - `compose.yaml` and `docker/` provide a disposable Ubuntu 22.04 integration-test VM. They are development tools, not a deployment path.

@@ -18,7 +18,7 @@ Debian 12 / Ubuntu 22.04 / Ubuntu 24.04 / Alpine
 
 ```bash
 # 跟随最新 Release 版本（推荐）
-curl -fsSL https://raw.githubusercontent.com/FunMaximum/sHway2/main/get.sh | sudo sh
+curl -fsSL https://raw.githubusercontent.com/FunMaximum/sHway2/master/get.sh | sudo sh
 ```
 
 ```bash
@@ -156,6 +156,20 @@ sb
 - `11453/tcp` — AnyTLS
 
 若修改了默认端口，请放行实际填写的端口。开启 Hysteria2 端口跳跃还需放行对应 UDP 端口段。
+
+服务端检查服务、配置、监听端口和本机防火墙：
+
+```sh
+sudo sh check-ports.sh server
+```
+
+从另一台机器检查公网端口（需要安装 `nmap`）：
+
+```sh
+sudo sh check-ports.sh remote 服务器IP 11451 11452 11453
+```
+
+TCP 显示 `open` 才能确认端口可达。UDP 显示 `open|filtered` 只能表示没有收到明确拒绝；显示 `closed` 才能确认端口或网络路径存在阻断。
 
 ---
 

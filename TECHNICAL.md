@@ -9,10 +9,30 @@ sHway2 的生产交付物是 POSIX Shell 安装器，不是 Docker 镜像：
 - `get.sh` 查询 GitHub 最新 Release，下载对应 tag 下的安装脚本并执行。
 - `sHway2.sh` 在 VPS 上安装 sing-box，写入服务端配置和管理命令，并注册 systemd 或 OpenRC 服务。文件名保持固定，发布版本由 Git tag 表示。
 - `uninstall.sh` 清除本项目的运行状态和服务注册，但保留 sing-box 内核、依赖、其他插件与 Git 仓库，用于更新后的快速干净重装。
+- `check-ports.sh` 提供只读诊断：服务端模式检查配置、监听和本机防火墙，远程模式使用 nmap 探测公网 TCP/UDP 端口。
 - `compose.yaml` 与 `docker/` 只在开发电脑上提供一次性 Ubuntu 22.04 测试环境，禁止作为真实服务器部署方案。
 - 禁止在宿主开发机执行仓库内的任何文件。所有项目脚本、语法检查、ShellCheck 和集成测试必须在测试容器内运行；宿主机只允许读取/编辑仓库及调用 Docker/Compose。
 
 `参考/` 是上游背景资料，不是生产实现。
+
+### 产品定位：轻量 Hiddify
+
+sHway2 的长期目标是成为面向自用、单服务器和单用户的“轻量 Hiddify”。参考 Hiddify-Manager 的统一管理体验，但不复制其面板和多组件架构。
+
+应保留的体验：
+
+- 一条命令完成安装，一个 `sb` 入口完成节点查看、状态、日志、重启、诊断、更新与卸载。
+- 安装器统一管理内核、配置、证书、服务和客户端节点输出，并能明确报告故障所在层级。
+- 优先保证 v2rayN 与 sing-box 客户端可直接使用的分享链接，后续可在不引入常驻面板的前提下提供单用户订阅输出。
+- 更新或重装应可预测、可诊断，且不依赖 Docker 生产环境。
+
+明确不引入的 Hiddify 重量能力：
+
+- Web 管理面板、Python 应用、MySQL、Redis、Nginx、HAProxy 和常驻订阅服务。
+- 多用户、流量/到期计费、多管理员、Telegram Bot、CDN 编排和二十多种协议矩阵。
+- 同时维护 Xray 与 sing-box 多核心；sing-box 继续是唯一代理核心。
+
+参考 Hiddify 时，优先吸收 `menu.sh`、`status.sh`、`restart.sh`、`update.sh` 和 `uninstall.sh` 的生命周期组织方式；其 Jinja 模板、面板数据模型与多服务并行安装方式不作为 sHway2 的实现基础。
 
 ## 2. 生产安装流程
 
@@ -82,7 +102,7 @@ docker compose down
 
 ### 已修复的中风险与一致性问题
 
-1. 主端口现在校验数值、重复和实际监听占用；重复安装时允许当前 sing-box 自身占用。
+1. 主端口现在校验数值和重复；实际监听占用检查仍有下述待修复问题。
 2. HY2 上下行必须是正整数。
 3. SNI 改变、证书损坏或密钥缺失时会原子生成新证书和私钥。
 4. 现有 sing-box 必须不低于 1.12；低版本重新下载，固定版本也必须满足最低版本。
@@ -90,6 +110,12 @@ docker compose down
 6. 下载目录、引导临时文件和证书临时文件均由 signal/exit trap 清理；重复安装前安全删除旧端口跳跃规则。
 7. 公网 IP 获取失败时默认值为空，安装器要求用户输入合法服务器地址，不能再生成占位链接。
 8. GitHub API 限流时可以使用显式版本变量跳过 API，也可以提供 `GITHUB_TOKEN`。
+
+### 已发现待修复问题
+
+1. `port_in_use()` 使用 `ss` 输出的第 5 列匹配监听端口，但 Linux `ss -H -l{u,t}np` 的本地地址在第 4 列，因此安装前的 TCP/UDP 端口占用检查会漏报。这可能导致 sing-box 重启时因端口冲突失败，但不会让已经成功绑定的 UDP inbound 在运行中失效。
+2. `check-ports.sh server` 目前依赖 `client-info.env` 读取端口，无法直接诊断“服务仍在运行但元数据缺失”的部分安装状态。
+3. `check-ports.sh remote` 只提示需要外部机器，尚不会识别用户是否在目标 VPS 上扫描其自身公网地址；云环境的 NAT 路径可能让此类结果无法代表外部可达性。
 
 ### 卸载与快速重装
 
@@ -100,7 +126,8 @@ docker compose down
 
 ### 仍需外部验证
 
-- 分享链接按 v2rayN 兼容目标生成，但仓库无法自动执行真实客户端导入；三个协议仍需客户端验收。
+- 分享链接按 v2rayN 兼容目标生成，但仓库无法自动执行真实 v2rayN 导入；链接字段及公网路径仍需真实客户端验收。
+- Ubuntu 22.04 容器内已使用 sing-box 客户端配置分别完成 Hysteria2 和 TUIC 的 QUIC/TLS/认证及实际代理请求，证明安装器生成的两个 UDP inbound 可用；该本机容器测试不覆盖云安全组、公网 NAT 或外部防火墙。
 - Ubuntu 22.04/systemd 已覆盖；Debian 12、Ubuntu 24.04 与 Alpine/OpenRC 仍需独立集成测试。
 
 ### ShellCheck 基线
@@ -141,3 +168,11 @@ docker compose down
 - 新增 `uninstall.sh`，清理项目配置、服务注册、`sb`、OpenRC 日志和端口跳跃规则。
 - 保留 sing-box 内核、系统依赖、其他插件和仓库，支持更新代码后快速重新安装。
 - Ubuntu 22.04/systemd 已验证真实卸载、第二次幂等卸载、内核保留，以及卸载后复用内核完成安装和全部标准验收。
+
+### 端口诊断
+
+- 新增 `check-ports.sh server`，从元数据读取实际端口并检查服务、配置、本地监听、ufw、iptables 与 nftables 摘要。
+- 新增 `check-ports.sh remote`，要求在另一台机器使用 nmap 分别探测 AnyTLS TCP 与 HY2/TUIC UDP。
+- 云安全组无法由普通 VPS 本机诊断；UDP `open|filtered` 不是协议成功证明，必须结合真实客户端日志判断。
+- Ubuntu 22.04 容器已验证 server 模式能正确识别三个监听端口和 INPUT 默认策略；remote 模式尚未在独立公网机器验证。
+- Ubuntu 22.04 容器已通过临时 mixed inbound 与 HY2/TUIC outbound 进行端到端验收，两种 UDP 协议均能完成实际 HTTP 代理请求。
