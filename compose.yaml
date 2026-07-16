@@ -1,0 +1,29 @@
+services:
+  ubuntu2204:
+    build:
+      context: .
+      dockerfile: docker/ubuntu22.04.Dockerfile
+    image: shway2-test:ubuntu22.04
+    container_name: sHway-ubuntu2204
+    privileged: true
+    cgroup: host
+    stdin_open: true
+    tty: true
+    stop_signal: SIGRTMIN+3
+    stop_grace_period: 30s
+    tmpfs:
+      - /run
+      - /run/lock
+    volumes:
+      - .:/workspace:ro
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+    ports:
+      - "127.0.0.1:11451:11451/udp"
+      - "127.0.0.1:11452:11452/udp"
+      - "127.0.0.1:11453:11453/tcp"
+    healthcheck:
+      test: ["CMD", "systemctl", "show-environment"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+    command: ["/sbin/init"]

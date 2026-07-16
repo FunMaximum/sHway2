@@ -1,0 +1,35 @@
+#!/usr/bin/expect -f
+
+set timeout 600
+
+proc answer {pattern value} {
+  expect {
+    -glob "*$pattern*" {
+      send -- "$value\r"
+    }
+    eof {
+      set result [wait]
+      exit [lindex $result 3]
+    }
+    timeout {
+      puts stderr "等待安装提示超时：$pattern"
+      exit 124
+    }
+  }
+}
+
+spawn sh /workspace/sHway2-v1.0.sh
+
+answer "服务器地址/IP（用于客户端导入）" ""
+answer "TLS SNI/证书域名" ""
+answer "Hysteria2 UDP 端口" ""
+answer "TUIC v5 UDP 端口" ""
+answer "AnyTLS TCP 端口" ""
+answer "Hysteria2 上行 Mbps" ""
+answer "Hysteria2 下行 Mbps" ""
+answer "节点名称前缀" ""
+answer "是否开启 Hysteria2 端口跳跃" "n"
+
+expect eof
+set result [wait]
+exit [lindex $result 3]

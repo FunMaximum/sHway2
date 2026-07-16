@@ -2,7 +2,7 @@
 
 Hysteria2 + TUIC v5 + AnyTLS 一键部署脚本。使用单个 sing-box 进程同时运行三种协议，安装完成后输出可直接导入 v2rayN 的分享链接。
 
-支持自动证书申请、端口检查、安装中断恢复、可交互选择配置。
+支持生成自签证书、交互式端口配置和单进程服务管理。
 
 ### 支持系统
 
@@ -67,6 +67,37 @@ sb restart  # 重启 sing-box
 sb log      # 查看 sing-box 日志
 sb help     # 查看帮助
 ```
+
+---
+
+## Docker 开发测试
+
+Docker 只用于在开发电脑上创建一次性 Ubuntu 22.04 测试机。真实服务器仍应使用上方 `.sh` 安装方式，不能把 Compose 当作生产部署方案。
+
+测试容器会运行 systemd 和完整安装流程，因此需要 `privileged` 与 cgroup 挂载，只应在可信开发机使用。禁止在宿主机直接执行仓库中的脚本。
+
+```sh
+# 基于本地 ubuntu:22.04 构建测试镜像
+docker compose build ubuntu2204
+
+# 启动并等待 systemd 就绪
+docker compose up -d --wait ubuntu2204
+
+# 在容器内执行默认安装及完整验收
+docker compose exec ubuntu2204 sh /workspace/docker/test-default.sh
+
+# 销毁测试机和全部安装产物
+docker compose down
+```
+
+自动测试使用默认端口并关闭 Hysteria2 端口跳跃。需要自定义交互测试时：
+
+```sh
+docker compose exec ubuntu2204 sh /workspace/sHway2-v1.0.sh
+docker compose exec ubuntu2204 sh /workspace/docker/verify-install.sh
+```
+
+测试需要访问 Ubuntu 软件源、GitHub Releases API 和 GitHub Release 资源；匿名 GitHub API 被限流时安装器会以 HTTP 403 失败。Compose 仅将默认端口发布到宿主机回环地址。当前测试环境只覆盖 Ubuntu 22.04；详细架构、测试边界和脚本审计见 [`TECHNICAL.md`](TECHNICAL.md)。
 
 ---
 
