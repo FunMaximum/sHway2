@@ -18,7 +18,7 @@ proc answer {pattern value} {
   }
 }
 
-spawn sh /workspace/sHway2-v1.0.sh
+spawn sh /workspace/sHway2.sh
 
 answer "服务器地址/IP（用于客户端导入）" ""
 answer "TLS SNI/证书域名" ""

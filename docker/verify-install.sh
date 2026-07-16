@@ -11,12 +11,12 @@ fail() {
 }
 
 printf '检查项目脚本语法与 ShellCheck...\n'
-sh -n /workspace/get.sh /workspace/sHway2-v1.0.sh
-# 生产脚本的三个既有告警已记录在 TECHNICAL.md；Docker 测试变更不修改生产代码。
-shellcheck --exclude=SC1091,SC2015,SC2153 \
+sh -n /workspace/get.sh /workspace/sHway2.sh
+shellcheck \
   /workspace/get.sh \
-  /workspace/sHway2-v1.0.sh
-shellcheck /workspace/docker/test-default.sh /workspace/docker/verify-install.sh
+  /workspace/sHway2.sh \
+  /workspace/docker/test-default.sh \
+  /workspace/docker/verify-install.sh
 
 printf '检查生成文件与 sing-box 配置...\n'
 for file in \

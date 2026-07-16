@@ -23,7 +23,14 @@ curl -fsSL https://raw.githubusercontent.com/FunMaximum/sHway2/main/get.sh | sud
 
 ```bash
 # 跟随指定 tag 版本
-curl -fsSL https://raw.githubusercontent.com/FunMaximum/sHway2/refs/tags/v1.0/sHway2-v1.0.sh | sudo sh
+curl -fsSL https://raw.githubusercontent.com/FunMaximum/sHway2/refs/tags/v1.0/sHway2.sh | sudo sh
+```
+
+GitHub API 被限流时，可下载脚本并固定 sing-box 版本运行：
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/FunMaximum/sHway2/refs/tags/v1.0/sHway2.sh -o /tmp/sHway2.sh
+sudo env SING_BOX_VERSION=1.13.12 sh /tmp/sHway2.sh
 ```
 
 Alpine 如未安装 curl：
@@ -70,6 +77,29 @@ sb help     # 查看帮助
 
 ---
 
+## 卸载与更新
+
+清除现有配置和服务注册，但保留 sing-box 内核与系统依赖：
+
+```sh
+sudo sh uninstall.sh
+```
+
+跳过卸载确认：
+
+```sh
+sudo sh uninstall.sh --yes
+```
+
+卸载后更新仓库并重新安装：
+
+```sh
+git pull
+sudo sh sHway2.sh
+```
+
+---
+
 ## Docker 开发测试
 
 Docker 只用于在开发电脑上创建一次性 Ubuntu 22.04 测试机。真实服务器仍应使用上方 `.sh` 安装方式，不能把 Compose 当作生产部署方案。
@@ -93,7 +123,7 @@ docker compose down
 自动测试使用默认端口并关闭 Hysteria2 端口跳跃。需要自定义交互测试时：
 
 ```sh
-docker compose exec ubuntu2204 sh /workspace/sHway2-v1.0.sh
+docker compose exec ubuntu2204 sh /workspace/sHway2.sh
 docker compose exec ubuntu2204 sh /workspace/docker/verify-install.sh
 ```
 

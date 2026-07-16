@@ -1,11 +1,11 @@
 #!/bin/sh
 #
-# sHway2 v1.0
+# sHway2
 # Hysteria2 + TUIC v5 + AnyTLS 一键部署脚本
 # 支持系统：Debian 12 / Ubuntu 22.04 / Ubuntu 24.04 / Alpine
 #
 # 功能：
-#   - 自动安装 sing-box 最新版
+#   - 自动安装或复用兼容的 sing-box
 #   - 自签 TLS 证书 / 交互式端口配置
 #   - Hysteria2 端口跳跃（iptables NAT）
 #   - 输出 v2rayN 兼容分享链接
@@ -20,7 +20,11 @@ CERT="$BASE_DIR/server.crt"
 KEY="$BASE_DIR/server.key"
 BIN="/usr/local/bin/sing-box"
 SERVICE_NAME="sing-box"
-VERSION="1.0"
+INSTALLER_VERSION="1.0"
+MIN_SING_BOX_VERSION="1.12.0"
+TMP_DIR=""
+CERT_TMP=""
+KEY_TMP=""
 
 red() { printf '\033[31m%s\033[0m\n' "$*"; }
 green() { printf '\033[32m%s\033[0m\n' "$*"; }
@@ -32,12 +36,26 @@ die() {
   exit 1
 }
 
+cleanup() {
+  if [ -n "$TMP_DIR" ] && [ -d "$TMP_DIR" ]; then
+    rm -rf "$TMP_DIR"
+  fi
+  [ -z "$CERT_TMP" ] || rm -f "$CERT_TMP"
+  [ -z "$KEY_TMP" ] || rm -f "$KEY_TMP"
+}
+
+trap cleanup 0
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
 need_root() {
   [ "$(id -u)" = "0" ] || die "请使用 root 用户运行：sudo sh $0"
 }
 
 detect_os() {
   [ -r /etc/os-release ] || die "无法识别系统，仅支持 Debian 12 / Ubuntu 22.04 / Ubuntu 24.04 / Alpine"
+  # shellcheck disable=SC1091
   . /etc/os-release
   OS_ID="${ID:-}"
   OS_VER="${VERSION_ID:-}"
@@ -113,14 +131,13 @@ read_tty() {
   fi
 }
 
-ask_var() {
-  ASK_VAR_TARGET="$1"
-  ASK_VAR_PROMPT="$2"
-  ASK_VAR_DEFAULT="$3"
-  printf '%s [%s]: ' "$ASK_VAR_PROMPT" "$ASK_VAR_DEFAULT" >/dev/tty
+ask_value() {
+  ASK_VALUE_PROMPT="$1"
+  ASK_VALUE_DEFAULT="$2"
+  printf '%s [%s]: ' "$ASK_VALUE_PROMPT" "$ASK_VALUE_DEFAULT" >/dev/tty
   read_tty
-  [ -n "$ans" ] || ans="$ASK_VAR_DEFAULT"
-  eval "$ASK_VAR_TARGET=\$ans"
+  [ -n "$ans" ] || ans="$ASK_VALUE_DEFAULT"
+  ANSWER="$ans"
 }
 
 ask_yes_no() {
@@ -147,19 +164,111 @@ valid_port() {
 }
 
 ask_port_var() {
-  ASK_PORT_TARGET="$1"
-  ASK_PORT_NAME="$2"
-  ASK_PORT_DEFAULT="$3"
+  ASK_PORT_NAME="$1"
+  ASK_PORT_DEFAULT="$2"
   while :; do
     printf '%s [%s]: ' "$ASK_PORT_NAME" "$ASK_PORT_DEFAULT" >/dev/tty
     read_tty
     [ -n "$ans" ] || ans="$ASK_PORT_DEFAULT"
     if valid_port "$ans"; then
-      eval "$ASK_PORT_TARGET=\$ans"
+      ANSWER="$ans"
       return
     fi
     yellow "端口必须是 1-65535 的数字"
   done
+}
+
+valid_safe_text() {
+  value="$1"
+  case "$value" in
+    ''|*[!A-Za-z0-9._-]*) return 1 ;;
+    *) return 0 ;;
+  esac
+}
+
+ask_safe_value() {
+  ASK_SAFE_PROMPT="$1"
+  ASK_SAFE_DEFAULT="$2"
+  while :; do
+    ask_value "$ASK_SAFE_PROMPT" "$ASK_SAFE_DEFAULT"
+    if valid_safe_text "$ANSWER"; then
+      return
+    fi
+    yellow "仅允许字母、数字、点、下划线和连字符，且不能为空"
+  done
+}
+
+valid_positive_int() {
+  value="$1"
+  case "$value" in
+    ''|*[!0-9]*) return 1 ;;
+  esac
+  [ "$value" -ge 1 ] 2>/dev/null
+}
+
+ask_positive_int() {
+  ASK_INT_PROMPT="$1"
+  ASK_INT_DEFAULT="$2"
+  while :; do
+    ask_value "$ASK_INT_PROMPT" "$ASK_INT_DEFAULT"
+    if valid_positive_int "$ANSWER"; then
+      return
+    fi
+    yellow "请输入大于 0 的整数"
+  done
+}
+
+valid_port_range() {
+  range="$1"
+  case "$range" in
+    *:*) ;;
+    *) return 1 ;;
+  esac
+  start=${range%%:*}
+  end=${range#*:}
+  [ "$end" = "${end#*:}" ] || return 1
+  valid_port "$start" && valid_port "$end" && [ "$start" -le "$end" ]
+}
+
+port_in_use() {
+  protocol="$1"
+  port="$2"
+  case "$protocol" in
+    udp) flags="-H-lunp" ;;
+    tcp) flags="-H-ltnp" ;;
+    *) return 1 ;;
+  esac
+  ss "$flags" 2>/dev/null | awk -v suffix=":$port" '
+    $5 ~ suffix "$" && $0 !~ /sing-box/ { found = 1 }
+    END { exit found ? 0 : 1 }
+  '
+}
+
+check_ports() {
+  [ "$HY2_PORT" != "$TUIC_PORT" ] || die "Hysteria2 与 TUIC 的 UDP 端口不能相同"
+  [ "$HY2_PORT" != "$ANYTLS_PORT" ] || die "Hysteria2 与 AnyTLS 的端口不能相同"
+  [ "$TUIC_PORT" != "$ANYTLS_PORT" ] || die "TUIC 与 AnyTLS 的端口不能相同"
+
+  port_in_use udp "$HY2_PORT" && die "UDP 端口 $HY2_PORT 已被其他进程占用"
+  port_in_use udp "$TUIC_PORT" && die "UDP 端口 $TUIC_PORT 已被其他进程占用"
+  port_in_use tcp "$ANYTLS_PORT" && die "TCP 端口 $ANYTLS_PORT 已被其他进程占用"
+  return 0
+}
+
+version_at_least() {
+  current="$1"
+  minimum="$2"
+  awk -v current="$current" -v minimum="$minimum" 'BEGIN {
+    split(current, a, /[^0-9]+/)
+    split(minimum, b, /[^0-9]+/)
+    for (i = 1; i <= 3; i++) {
+      av = a[i] + 0
+      bv = b[i] + 0
+      if (av > bv) exit 0
+      if (av < bv) exit 1
+    }
+    exit 0
+  }'
 }
 
 urlencode() {
@@ -183,7 +292,6 @@ get_ip() {
   ip=""
   ip="$(curl -4fsS --max-time 5 https://api.ipify.org 2>/dev/null || true)"
   [ -n "$ip" ] || ip="$(curl -4fsS --max-time 5 https://ifconfig.me 2>/dev/null || true)"
-  [ -n "$ip" ] || ip="请手动替换为服务器IP或域名"
   printf '%s' "$ip"
 }
 
@@ -192,10 +300,10 @@ install_deps() {
   case "$PKG_TYPE" in
     apt)
       apt-get update
-      DEBIAN_FRONTEND=noninteractive apt-get install -y ca-certificates curl tar openssl iptables
+      DEBIAN_FRONTEND=noninteractive apt-get install -y ca-certificates curl tar openssl iptables iproute2
       ;;
     apk)
-      apk add --no-cache ca-certificates curl tar openssl iptables
+      apk add --no-cache ca-certificates curl tar openssl iptables iproute2
       ;;
     *)
       die "未知包管理器：$PKG_TYPE"
@@ -206,14 +314,31 @@ install_deps() {
 install_sing_box() {
   if [ -x "$BIN" ]; then
     cur="$($BIN version 2>/dev/null | awk 'NR==1{print $3}' || true)"
-    [ -n "$cur" ] && green "检测到已安装 sing-box $cur，将继续覆盖配置。" || green "检测到已安装 sing-box，将继续覆盖配置。"
-    return
+    if [ -n "$cur" ] && version_at_least "$cur" "$MIN_SING_BOX_VERSION"; then
+      green "检测到兼容的 sing-box $cur，将继续覆盖配置。"
+      return
+    fi
+    yellow "已安装的 sing-box 版本未知或低于 $MIN_SING_BOX_VERSION，将下载兼容版本。"
   fi
 
-  info "正在下载 sing-box 最新版..."
-  api="$(curl -fsSL --max-time 20 https://api.github.com/repos/SagerNet/sing-box/releases/latest)" || die "获取 sing-box 最新版本失败"
-  tag="$(printf '%s' "$api" | sed -n 's/.*"tag_name": *"v\([^"]*\)".*/\1/p' | head -n 1)"
-  [ -n "$tag" ] || die "解析 sing-box 最新版本失败"
+  tag="${SING_BOX_VERSION:-}"
+  tag="${tag#v}"
+  if [ -z "$tag" ]; then
+    info "正在查询 sing-box 最新版..."
+    if [ -n "${GITHUB_TOKEN:-}" ]; then
+      api="$(curl -fsSL --max-time 20 -H "Authorization: Bearer $GITHUB_TOKEN" https://api.github.com/repos/SagerNet/sing-box/releases/latest)" || \
+        die "获取 sing-box 最新版本失败；可设置 SING_BOX_VERSION 跳过 API 查询"
+    else
+      api="$(curl -fsSL --max-time 20 https://api.github.com/repos/SagerNet/sing-box/releases/latest)" || \
+        die "获取 sing-box 最新版本失败；GitHub 限流时请设置 SING_BOX_VERSION"
+    fi
+    tag="$(printf '%s' "$api" | sed -n 's/.*"tag_name": *"v\([^"]*\)".*/\1/p' | head -n 1)"
+    [ -n "$tag" ] || die "解析 sing-box 最新版本失败"
+  fi
+  case "$tag" in
+    ''|*[!0-9A-Za-z.-]*) die "sing-box 版本格式无效：$tag" ;;
+  esac
+  version_at_least "$tag" "$MIN_SING_BOX_VERSION" || die "sing-box $tag 低于最低兼容版本 $MIN_SING_BOX_VERSION"
 
   case "$ARCH" in
     amd64) file_arch="amd64" ;;
@@ -221,45 +346,66 @@ install_sing_box() {
     armv7) file_arch="armv7" ;;
   esac
 
-  tmp="/tmp/sing-box-install.$$"
-  mkdir -p "$tmp"
+  TMP_DIR="$(mktemp -d /tmp/sing-box-install.XXXXXX)" || die "创建临时目录失败"
   if [ "$SINGBOX_FLAVOR" = "musl" ]; then
     url="https://github.com/SagerNet/sing-box/releases/download/v${tag}/sing-box-${tag}-linux-${file_arch}-musl.tar.gz"
   else
     url="https://github.com/SagerNet/sing-box/releases/download/v${tag}/sing-box-${tag}-linux-${file_arch}.tar.gz"
   fi
-  curl -fL --retry 3 --connect-timeout 10 -o "$tmp/sing-box.tar.gz" "$url" || die "下载 sing-box 失败：$url"
-  tar -xzf "$tmp/sing-box.tar.gz" -C "$tmp"
-  found="$(find "$tmp" -type f -name sing-box | head -n 1)"
+  curl -fL --retry 3 --connect-timeout 10 -o "$TMP_DIR/sing-box.tar.gz" "$url" || die "下载 sing-box 失败：$url"
+  tar -xzf "$TMP_DIR/sing-box.tar.gz" -C "$TMP_DIR"
+  found="$(find "$TMP_DIR" -type f -name sing-box | head -n 1)"
   [ -n "$found" ] || die "解压后未找到 sing-box"
   install -m 0755 "$found" "$BIN"
-  rm -rf "$tmp"
+  rm -rf "$TMP_DIR"
+  TMP_DIR=""
   green "sing-box 安装完成：$($BIN version | awk 'NR==1{print $0}')"
 }
 
 collect_inputs() {
   server_addr="$(get_ip)"
   info ""
-  info "sHway2 v${VERSION} — sing-box 一键部署"
+  info "sHway2 v${INSTALLER_VERSION} — sing-box 一键部署"
   info "请按提示填写配置，直接回车使用默认值。"
-  ask_var SERVER "服务器地址/IP（用于客户端导入）" "$server_addr"
-  ask_var SNI "TLS SNI/证书域名（自签可随意，建议填域名）" "www.bing.com"
-  ask_port_var HY2_PORT "Hysteria2 UDP 端口" "11451"
-  ask_port_var TUIC_PORT "TUIC v5 UDP 端口" "11452"
-  ask_port_var ANYTLS_PORT "AnyTLS TCP 端口" "11453"
-  ask_var HY2_UP "Hysteria2 上行 Mbps（小鸡建议 50）" "50"
-  ask_var HY2_DOWN "Hysteria2 下行 Mbps（小鸡建议 200）" "200"
-  ask_var REMARK_PREFIX "节点名称前缀" "SB"
+  ask_safe_value "服务器地址/IP（用于客户端导入）" "$server_addr"
+  SERVER="$ANSWER"
+  ask_safe_value "TLS SNI/证书域名（自签可随意，建议填域名）" "www.bing.com"
+  SNI="$ANSWER"
+  ask_port_var "Hysteria2 UDP 端口" "11451"
+  HY2_PORT="$ANSWER"
+  ask_port_var "TUIC v5 UDP 端口" "11452"
+  TUIC_PORT="$ANSWER"
+  ask_port_var "AnyTLS TCP 端口" "11453"
+  ANYTLS_PORT="$ANSWER"
+  ask_positive_int "Hysteria2 上行 Mbps（小鸡建议 50）" "50"
+  HY2_UP="$ANSWER"
+  ask_positive_int "Hysteria2 下行 Mbps（小鸡建议 200）" "200"
+  HY2_DOWN="$ANSWER"
+  ask_safe_value "节点名称前缀" "SB"
+  REMARK_PREFIX="$ANSWER"
+  check_ports
 
   HY2_JUMP="n"
   HY2_JUMP_RANGE=""
   if ask_yes_no "是否开启 Hysteria2 端口跳跃（UDP 端口段转发到 HY2 主端口）" "n"; then
     HY2_JUMP="y"
-    ask_var HY2_JUMP_RANGE "请输入跳跃端口范围，例如 20000:30000" "20000:30000"
-    case "$HY2_JUMP_RANGE" in
-      *:*) : ;;
-      *) die "端口跳跃范围格式错误，应类似 20000:30000" ;;
-    esac
+    while :; do
+      ask_value "请输入跳跃端口范围，例如 20000:30000" "20000:30000"
+      HY2_JUMP_RANGE="$ANSWER"
+      if valid_port_range "$HY2_JUMP_RANGE"; then
+        jump_start=${HY2_JUMP_RANGE%%:*}
+        jump_end=${HY2_JUMP_RANGE#*:}
+        if { [ "$HY2_PORT" -ge "$jump_start" ] && [ "$HY2_PORT" -le "$jump_end" ]; } || \
+           { [ "$TUIC_PORT" -ge "$jump_start" ] && [ "$TUIC_PORT" -le "$jump_end" ]; } || \
+           { [ "$ANYTLS_PORT" -ge "$jump_start" ] && [ "$ANYTLS_PORT" -le "$jump_end" ]; }; then
+          yellow "跳跃范围不能包含三个主服务端口"
+        else
+          break
+        fi
+      else
+        yellow "端口跳跃范围必须是合法的 起始端口:结束端口，且起始端口不大于结束端口"
+      fi
+    done
   fi
 
   HY2_PASS="$(rand_hex 16)"
@@ -272,10 +418,26 @@ collect_inputs() {
 write_cert() {
   mkdir -p "$BASE_DIR"
   chmod 700 "$BASE_DIR"
-  if [ ! -s "$CERT" ] || [ ! -s "$KEY" ]; then
+  cert_cn=""
+  if [ -s "$CERT" ]; then
+    cert_cn="$(openssl x509 -in "$CERT" -noout -subject -nameopt RFC2253 2>/dev/null | sed -n 's/^subject=CN=//p' || true)"
+  fi
+  if [ ! -s "$CERT" ] || [ ! -s "$KEY" ] || [ "$cert_cn" != "$SNI" ]; then
     info "正在生成自签 TLS 证书..."
+    CERT_TMP="$BASE_DIR/.server.crt.$$"
+    KEY_TMP="$BASE_DIR/.server.key.$$"
     openssl req -x509 -newkey rsa:2048 -sha256 -days 3650 -nodes \
-      -keyout "$KEY" -out "$CERT" -subj "/CN=$SNI" >/dev/null 2>&1
+      -keyout "$KEY_TMP" -out "$CERT_TMP" -subj "/CN=$SNI" >/dev/null 2>&1 || {
+        rm -f "$CERT_TMP" "$KEY_TMP"
+        CERT_TMP=""
+        KEY_TMP=""
+        die "生成 TLS 证书失败"
+      }
+    chmod 600 "$KEY_TMP"
+    mv "$KEY_TMP" "$KEY"
+    KEY_TMP=""
+    mv "$CERT_TMP" "$CERT"
+    CERT_TMP=""
     chmod 600 "$KEY"
   fi
 }
@@ -373,21 +535,45 @@ write_config() {
 EOF
 
   cat > "$META" <<EOF
-SERVER='$SERVER'
-SNI='$SNI'
-HY2_PORT='$HY2_PORT'
-TUIC_PORT='$TUIC_PORT'
-ANYTLS_PORT='$ANYTLS_PORT'
-HY2_PASS='$HY2_PASS'
-HY2_OBFS='$HY2_OBFS'
-TUIC_UUID='$TUIC_UUID'
-TUIC_PASS='$TUIC_PASS'
-ANYTLS_PASS='$ANYTLS_PASS'
-REMARK_PREFIX='$REMARK_PREFIX'
-HY2_JUMP='$HY2_JUMP'
-HY2_JUMP_RANGE='$HY2_JUMP_RANGE'
+SERVER=$SERVER
+SNI=$SNI
+HY2_PORT=$HY2_PORT
+TUIC_PORT=$TUIC_PORT
+ANYTLS_PORT=$ANYTLS_PORT
+HY2_PASS=$HY2_PASS
+HY2_OBFS=$HY2_OBFS
+TUIC_UUID=$TUIC_UUID
+TUIC_PASS=$TUIC_PASS
+ANYTLS_PASS=$ANYTLS_PASS
+REMARK_PREFIX=$REMARK_PREFIX
+HY2_JUMP=$HY2_JUMP
+HY2_JUMP_RANGE=$HY2_JUMP_RANGE
 EOF
   chmod 600 "$CONF" "$META"
+}
+
+read_old_jump() {
+  OLD_HY2_JUMP="n"
+  OLD_HY2_JUMP_RANGE=""
+  OLD_HY2_PORT=""
+  [ -r "$META" ] || return 0
+
+  OLD_HY2_JUMP="$(sed -n 's/^HY2_JUMP=//p' "$META" | head -n 1)"
+  OLD_HY2_JUMP_RANGE="$(sed -n 's/^HY2_JUMP_RANGE=//p' "$META" | head -n 1)"
+  OLD_HY2_PORT="$(sed -n 's/^HY2_PORT=//p' "$META" | head -n 1)"
+  OLD_HY2_JUMP="${OLD_HY2_JUMP#\'}"
+  OLD_HY2_JUMP="${OLD_HY2_JUMP%\'}"
+  OLD_HY2_JUMP_RANGE="${OLD_HY2_JUMP_RANGE#\'}"
+  OLD_HY2_JUMP_RANGE="${OLD_HY2_JUMP_RANGE%\'}"
+  OLD_HY2_PORT="${OLD_HY2_PORT#\'}"
+  OLD_HY2_PORT="${OLD_HY2_PORT%\'}"
+}
+
+cleanup_old_jump_rule() {
+  if [ "$OLD_HY2_JUMP" = "y" ] && valid_port_range "$OLD_HY2_JUMP_RANGE" && valid_port "$OLD_HY2_PORT"; then
+    iptables -t nat -D PREROUTING -p udp --dport "$OLD_HY2_JUMP_RANGE" \
+      -j REDIRECT --to-ports "$OLD_HY2_PORT" 2>/dev/null || true
+  fi
 }
 
 write_systemd_service() {
@@ -416,7 +602,7 @@ WantedBy=multi-user.target
 EOF
 
   systemctl daemon-reload
-  systemctl enable --now "$SERVICE_NAME"
+  systemctl enable "$SERVICE_NAME"
 }
 
 write_openrc_service() {
@@ -471,6 +657,7 @@ check_config() {
 }
 
 restart_service() {
+  cleanup_old_jump_rule
   if [ "$INIT" = "systemd" ]; then
     write_systemd_service
     systemctl restart "$SERVICE_NAME"
@@ -593,10 +780,49 @@ urlencode() {
   printf '%s' "$out"
 }
 
+load_meta() {
+  SERVER=""
+  SNI=""
+  HY2_PORT=""
+  TUIC_PORT=""
+  ANYTLS_PORT=""
+  HY2_PASS=""
+  HY2_OBFS=""
+  TUIC_UUID=""
+  TUIC_PASS=""
+  ANYTLS_PASS=""
+  REMARK_PREFIX=""
+  HY2_JUMP="n"
+  HY2_JUMP_RANGE=""
+
+  while IFS='=' read -r key value; do
+    case "$key" in
+      SERVER) SERVER="$value" ;;
+      SNI) SNI="$value" ;;
+      HY2_PORT) HY2_PORT="$value" ;;
+      TUIC_PORT) TUIC_PORT="$value" ;;
+      ANYTLS_PORT) ANYTLS_PORT="$value" ;;
+      HY2_PASS) HY2_PASS="$value" ;;
+      HY2_OBFS) HY2_OBFS="$value" ;;
+      TUIC_UUID) TUIC_UUID="$value" ;;
+      TUIC_PASS) TUIC_PASS="$value" ;;
+      ANYTLS_PASS) ANYTLS_PASS="$value" ;;
+      REMARK_PREFIX) REMARK_PREFIX="$value" ;;
+      HY2_JUMP) HY2_JUMP="$value" ;;
+      HY2_JUMP_RANGE) HY2_JUMP_RANGE="$value" ;;
+    esac
+  done < "$META"
+
+  [ -n "$SERVER" ] && [ -n "$SNI" ] && [ -n "$HY2_PORT" ] && \
+    [ -n "$TUIC_PORT" ] && [ -n "$ANYTLS_PORT" ] && [ -n "$HY2_PASS" ] && \
+    [ -n "$HY2_OBFS" ] && [ -n "$TUIC_UUID" ] && [ -n "$TUIC_PASS" ] && \
+    [ -n "$ANYTLS_PASS" ] && [ -n "$REMARK_PREFIX" ] || \
+    die "节点信息不完整或格式错误：$META"
+}
+
 print_links() {
   [ -r "$META" ] || die "未找到节点信息：$META，请先运行安装脚本"
-  # shellcheck disable=SC1090
-  . "$META"
+  load_meta
 
   e_server="$(urlencode "$SERVER")"
   e_sni="$(urlencode "$SNI")"
@@ -694,6 +920,7 @@ main() {
   detect_arch
   install_deps
   install_sing_box
+  read_old_jump
   collect_inputs
   write_cert
   write_config
