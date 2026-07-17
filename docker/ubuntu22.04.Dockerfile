@@ -12,10 +12,12 @@ RUN apt-get update \
     expect \
     iproute2 \
     jq \
+    netcat-openbsd \
     procps \
     shellcheck \
     systemd \
     systemd-sysv \
+    unzip \
   && apt-get clean \
   && rm -rf /var/lib/apt/lists/* \
   && systemctl mask \

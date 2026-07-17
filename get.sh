@@ -60,7 +60,7 @@ case "$tag" in
   *) die "版本格式无效：$tag" ;;
 esac
 case "$tag" in
-  *[!0-9A-Za-z.v-]*) die "版本格式无效：$tag" ;;
+  *[!0-9A-Za-z.v-]*|*..*) die "版本格式无效：$tag" ;;
 esac
 
 green "最新版本：$tag"
@@ -75,4 +75,4 @@ tmp="$(mktemp "/tmp/sHway2-${tag}.XXXXXX.sh")" || die "创建临时文件失败"
 curl -fsSL --retry 3 --connect-timeout 10 -o "$tmp" "$url" || die "下载失败：$url"
 
 chmod +x "$tmp"
-sh "$tmp"
+SHWAY2_RELEASE_TAG="$tag" sh "$tmp" "$@"

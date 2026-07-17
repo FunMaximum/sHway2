@@ -1,0 +1,30 @@
+#!/usr/bin/expect -f
+
+set timeout 600
+set server [lindex $argv 0]
+set prefix [lindex $argv 1]
+log_user 0
+
+proc answer {pattern value} {
+  expect {
+    -glob "*$pattern*" {
+      send -- "$value\r"
+    }
+    eof {
+      set result [wait]
+      exit [lindex $result 3]
+    }
+    timeout {
+      puts stderr "等待修复提示超时：$pattern"
+      exit 124
+    }
+  }
+}
+
+spawn /usr/local/bin/sb repair
+answer "服务器地址/IP（用于客户端导入）" "$server"
+answer "节点名称前缀" "$prefix"
+
+expect eof
+set result [wait]
+exit [lindex $result 3]

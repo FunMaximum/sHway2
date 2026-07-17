@@ -18,17 +18,20 @@ proc answer {pattern value} {
   }
 }
 
-spawn sh /workspace/sHway2.sh
+spawn env SING_BOX_VERSION=1.13.12 sh /workspace/sHway2.sh
 
 answer "服务器地址/IP（用于客户端导入）" ""
 answer "TLS SNI/证书域名" ""
 answer "Hysteria2 UDP 端口" ""
 answer "TUIC v5 UDP 端口" ""
 answer "AnyTLS TCP 端口" ""
+answer "VLESS Reality TCP 端口" ""
+answer "Reality 握手目标域名" ""
 answer "Hysteria2 上行 Mbps" ""
 answer "Hysteria2 下行 Mbps" ""
 answer "节点名称前缀" ""
 answer "是否开启 Hysteria2 端口跳跃" "n"
+answer "是否自动放行本机防火墙端口" "n"
 
 expect eof
 set result [wait]
